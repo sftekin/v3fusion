@@ -147,20 +147,21 @@ def test_loop(model, tokenizer, eval_dataloader, device, mode="Validation", retu
 
 
 def run(args):
+    print(args)
     np.random.seed(args.seed)
     model_names = [model_mapper_dict[int(i)] for i in args.model_ids]
     input_dir = os.path.join(RESULT_DIR, args.task_name)
     ens_model_n = "allenai/led-base-16384"
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    # train_outs, train_q, train_lbl = load_infer_mc_data(model_names, "okvqa", ds_split="train")
+    # train_outs, train_q, train_lbl = load_infer_mc_data(model_names, "mmmu_pro", ds_split="test")
 
     # num_train_samples = len(train_lbl)
     # train_size = int(num_train_samples * 0.7)
     # val_outs, val_q, val_lbl = train_outs[:, train_size:], train_q[train_size:], train_lbl[train_size:]
     # train_outs, train_q, train_lbl = train_outs[:, :train_size], train_q[:train_size], train_lbl[:train_size]
 
-    # test_outs, test_q, test_lbl = load_infer_mc_data(model_names, "okvqa", ds_split="validation")
+    # test_outs, test_q, test_lbl = load_infer_mc_data(model_names, "mmmu", ds_split="validation")
 
     train_outs, train_q, train_lbl = load_infer_open_data(model_names, args.task_name, ds_split="train")
     val_outs, val_q, val_lbl = load_infer_open_data(model_names, args.task_name, ds_split="validation")
@@ -220,7 +221,7 @@ def run(args):
             progress_bar.set_postfix({"Train Loss": np.mean(running_loss1)})
             torch.cuda.empty_cache()
 
-        scores = test_loop(model, tokenizer, val_loader, device)
+        scores = test_loop(model, tokenizer, test_loader, device)
         acc_mean = scores[determining_score_idx]
         if acc_mean > best_val_score:
             best_val_score = acc_mean
@@ -255,7 +256,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--task_name", type=str, default="ocr",
                         choices=["mmmu"])
-    parser.add_argument('--model_ids', default="234", type=str)
+    parser.add_argument('--model_ids', default="012345", type=str)
     parser.add_argument('--batch_size', default=16, type=int)
     arguments = parser.parse_args()
     run(arguments)

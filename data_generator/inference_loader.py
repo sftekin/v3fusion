@@ -125,5 +125,6 @@ def load_infer_mc_data(model_names, task_name, ds_split):
         model_outputs.append(extracted_outputs)
     model_outputs = np.array(model_outputs)
     ds_questions = ds_questions[:len(model_outputs[0])]
-    return model_outputs, ds_questions, answers
+    labels = labels.tolist()
+    return model_outputs, ds_questions, labels
 

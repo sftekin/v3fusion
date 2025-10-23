@@ -1,0 +1,18 @@
+{
+    // Use Black as the Python formatter (PEP8 compliant)
+    "python.formatting.provider": "black",
+    // Automatically format Python files on save
+    "editor.formatOnSave": true,
+    // Organize imports automatically on save
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    },
+    // Optional: set Black line length to 79 for strict PEP8 compliance
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "79"
+    ],
+    // Optional: show format provider in the status bar
+    "python.formatting.autopep8Path": "",
+    "python.formatting.blackPath": ""
+}

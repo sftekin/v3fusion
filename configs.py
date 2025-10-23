@@ -5,7 +5,7 @@ RESULT_DIR = "results"
 # HF_CACHE = "~/.cache/huggingface"
 HF_CACHE = "~/scratch/hf-cache"
 
-hf_token = "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"
+hf_token = ""
 
 llm_domains = {
     "llava-v1.6-vicuna-7b-hf": "llava-hf",
