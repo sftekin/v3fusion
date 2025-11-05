@@ -1,0 +1,36 @@
+---------------------------------------
+Begin Slurm Prolog: Nov-04-2025 19:43:57
+Job ID:    3497816
+User ID:   stekin6
+Account:   scs
+Job name:  visual_embed
+Partition: coc-gpu
+QOS:       coc-ice
+---------------------------------------
+
+CondaError: Run 'conda init' before 'conda activate'
+
+Traceback (most recent call last):
+  File "/storage/ice1/1/5/stekin6/rl-vqa/inference_scripts/obtain_visual_embeddings.py", line 30, in <module>
+    from model_helper import load_image
+  File "/storage/ice1/1/5/stekin6/rl-vqa/model_helper.py", line 2, in <module>
+    import nltk
+ModuleNotFoundError: No module named 'nltk'
+Traceback (most recent call last):
+  File "/storage/ice1/1/5/stekin6/rl-vqa/inference_scripts/obtain_visual_embeddings.py", line 30, in <module>
+    from model_helper import load_image
+  File "/storage/ice1/1/5/stekin6/rl-vqa/model_helper.py", line 2, in <module>
+    import nltk
+ModuleNotFoundError: No module named 'nltk'
+---------------------------------------
+Begin Slurm Epilog: Nov-04-2025 19:44:14
+Job ID:        3497816
+User ID:       stekin6
+Account:       scs
+Job name:      visual_embed
+Resources:     cpu=1,gres/gpu:a100=1,mem=120G,node=1
+Rsrc Used:     cput=00:00:17,vmem=0,walltime=00:00:17,mem=608704K,energy_used=0
+Partition:     coc-gpu
+QOS:           coc-ice
+Nodes:         atl1-1-03-007-33-0
+---------------------------------------

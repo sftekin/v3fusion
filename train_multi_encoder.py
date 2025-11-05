@@ -24,7 +24,7 @@ class EmbeddingLoader(Dataset):
         self.embeddings = []
         for mn in model_names:
             save_path = os.path.join(self.data_dir, f"{mn}_vis_embed.pt")
-            self.embeddings.append(torch.load(save_path))
+            self.embeddings.append(torch.load(save_path, weights_only=True))
         print("embeddings are loaded")
         
         self.total_len = len(self.embeddings[0])
@@ -55,6 +55,9 @@ def collate_fn(batch):
         model_out = []
         for n in range(batch_size):
             embed = batch[n][m]
+            if len(embed.shape) >= 3:
+                embed = embed[0]
+                embed = embed[1:]
             last_dim = embed.shape[-1]
             embed = embed.reshape(-1, last_dim).mean(dim=0, keepdims=True)
             pooled = F.normalize(embed, p=2, dim=1)
@@ -99,9 +102,9 @@ def test_loop(enc_dec, val_loader, lambda_align=1.0, lambda_recon=1.0):
 def run(args):
     print(args)
     model_names = ["llava-v1.6-vicuna-7b-hf", "Qwen2.5-VL-7B-Instruct", "InternVL2-8B"]
-    dataset_name = "okvqa"
+    dataset_name = "mmmu"
     
-    train_dataset = EmbeddingLoader(dataset_name, model_names, split_type="train")
+    train_dataset = EmbeddingLoader(dataset_name, model_names, split_type="validation")
     train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
 
     val_dataset = EmbeddingLoader(dataset_name, model_names, split_type="validation")
@@ -132,11 +135,11 @@ def run(args):
             # batch is a list: [batch_for_model1, batch_for_model2, ...]
             batch = [k.to("cuda").float() for k in batch]
             latents, recons = enc_dec(batch)
-            
-            loss = loss_fn(latents, recons, batch,
-                           lambda_align=args.lambda_align, lambda_recon=args.lambda_recon)
+            loss = loss_fn(
+                latents, recons, batch,
+                lambda_align=args.lambda_align,
+                lambda_recon=args.lambda_recon)
             loss.backward()
-
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
@@ -178,7 +181,9 @@ def run(args):
     print(f"Val loss shape: {val_loss_array.shape}")
     
     fig, ax = plt.subplots()
-    
+    x_axis = np.arange(len(train_loss_array))
+    ax.plot(x_axis, train_loss_array, label="Train Loss")
+    ax.plot(x_axis, val_loss_array, label="Validation Loss")
     ax.set_title('Loss Plot')
     ax.legend()
     ax.set_xlabel('Epoch')
@@ -193,11 +198,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='inference scripts for the trained models')
     parser.add_argument("--task_name", type=str, default="ocr", 
                         choices=["ocr", "okvqa", "mmmu", "mmmu_pro"])
-    parser.add_argument("--num_epochs", type=int, default=30)
+    parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--lambda_align", type=float, default=0.001)
     parser.add_argument("--lambda_recon", type=float, default=1.0)
-    parser.add_argument("--model_name", type=str, default="InternVL2-8B",
-                        choices=["llava-v1.6-vicuna-7b-hf", "llava-v1.6-vicuna-13b-hf", "Qwen2.5-VL-7B-Instruct", "InternVL2-8B"])
     parser.add_argument("--dataset_type", type= str, default="train", choices=["test", "validation", "train"])
     parser.add_argument("--num_samples", type=int, default=3000)
     parser.add_argument("--checkpoint_count", type=int, default=500)

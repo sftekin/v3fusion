@@ -11,29 +11,32 @@ from configs import hf_token, HF_CACHE, llm_domains
 os.environ['HF_HOME'] = HF_CACHE
 
 import torch
-import transformers
-from transformers import StoppingCriteria, StoppingCriteriaList
-from peft import PeftModel
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
+# import transformers
+# from transformers import StoppingCriteria, StoppingCriteriaList
+# # from peft import PeftModel
+# import pandas as pd
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from PIL import Image
 
 from configs import hf_token, prompt_formats, llm_domains
 import torch.nn.functional as F
 
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+# from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 from data_generator.data_loader import DataCreator
 from data_generator.data_helper import construct_open_ended_prompt
-from transformers import AutoProcessor, AutoModelForImageTextToText
+# from transformers import AutoProcessor, AutoModelForImageTextToText
 from transformers import AutoModel, AutoTokenizer
 from model_helper import load_image
 from datasets import load_dataset
+from transformers import AutoModelForCausalLM
+from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
+from deepseek_vl2.utils.io import load_pil_images
 
 
 def load_model(model_path):
     if "llava" in model_path:
-        model_id = "llava-hf/llava-v1.6-vicuna-7b-hf"
+        model_id = f"llava-hf/{model_path}"
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_id, 
             torch_dtype=torch.float16, 
@@ -55,6 +58,13 @@ def load_model(model_path):
                 use_flash_attn=True,
                 trust_remote_code=True).eval().cuda()
         processor = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+    else:
+        model_id = f"deepseek-ai/{model_path}"
+        processor = DeepseekVLV2Processor.from_pretrained(model_id, token=hf_token)
+        vl_gpt: DeepseekVLV2ForCausalLM = AutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, token=hf_token)
+        model = vl_gpt
+        model = model.to("cuda").eval()
     return model, processor
 
 def hook_models(model, model_name):
@@ -76,6 +86,12 @@ def hook_models(model, model_name):
         def hook_visual(module, input, output):
             visual_features["raw"] = output.last_hidden_state.detach().cpu()
         h1 = model.vision_model.register_forward_hook(hook_visual)
+    
+    elif "deepseek" in model_name:
+        def hook_visual(module, input, output):
+            # print(output.shape)
+            visual_features["raw"] = output.detach().cpu()
+        h1 = model.vision.register_forward_hook(hook_visual)
 
     return visual_features
     
@@ -112,6 +128,37 @@ def feed_images(image, model, processor, model_name):
         generation_config = dict(max_new_tokens=100, return_dict_in_generate=False, output_scores=True)
         pixel_values = load_image(image).to(torch.bfloat16).cuda()
         output = model.chat(processor, pixel_values, question, generation_config)
+
+    elif "deepseek" in model_name:
+        conversation = [
+            {
+                "role": "<|User|>",
+                "content": f"<image>\n<|ref|>{question}<|/ref|>",
+                "images": [image.convert("RGB")],
+            },
+            {"role": "<|Assistant|>", "content": ""},
+        ]
+
+        prepare_inputs = processor(
+            conversations=conversation,
+            images=[image.convert("RGB")],
+            force_batchify=True,
+            system_prompt="").to(model.device)
+        model = model.to(dtype=torch.bfloat16, device="cuda")
+        inputs_embeds = model.prepare_inputs_embeds(**prepare_inputs)
+        output = model.language.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=prepare_inputs.attention_mask,
+            pad_token_id=processor.tokenizer.eos_token_id,
+            bos_token_id=processor.tokenizer.bos_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
+            max_new_tokens=100,
+            do_sample=True,
+            # return_dict_in_generate=True,
+            # output_scores=True,
+            temperature=0.7
+        )
+        output_txt = processor.decode(output[0], skip_special_tokens=True)
         
     return output
     
@@ -120,12 +167,13 @@ def feed_images(image, model, processor, model_name):
 def run(args):
     print(args)
 
-    ds = load_dataset("HuggingFaceM4/A-OKVQA", token=hf_token)
+    ds_creator = DataCreator(args.task_name)
+    
     model, processor = load_model(args.model_name)
 
     visual_features = hook_models(model, args.model_name)
     
-    save_dir = os.path.join(parent_dir, "results", "visual_features", "okvqa", args.dataset_type)
+    save_dir = os.path.join(parent_dir, "results", "visual_features", args.task_name, args.dataset_type)
     print(save_dir)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -134,20 +182,26 @@ def run(args):
     #     save_path = os.path.join(save_dir, f"{args.model_name}_vis_embed_{2000}.pt")
     #     embeddings = torch.load(save_path)
     embeddings = []
-    for i, example in enumerate(tqdm.tqdm(ds[args.dataset_type])):
-        im = example["image"]
-        output = feed_images(im, model, processor, args.model_name)
-        embeddings.append(visual_features["raw"])
-        
-        if i % args.checkpoint_count == 0 and i > 0:
-            save_path = os.path.join(save_dir, f"{args.model_name}_vis_embed_{i}.pt")
-            torch.save(embeddings, save_path)
+    i = 0
+    for ds in tqdm.tqdm(ds_creator.get(args.dataset_type), total=len(ds_creator)):
+        for example in tqdm.tqdm(ds, total=len(ds)):
+            if args.task_name == "mmmu":
+                im = example["image_1"]
+            else:
+                im = example["image"]
+            output = feed_images(im, model, processor, args.model_name)
+            embeddings.append(visual_features["raw"])
+            
+            if i % args.checkpoint_count == 0 and i > 0:
+                save_path = os.path.join(save_dir, f"{args.model_name}_vis_embed_{i}.pt")
+                torch.save(embeddings, save_path)
 
-        # tqdm.tqdm.write(f"{output[:100]}... {visual_features['raw'].shape}")
+            # tqdm.tqdm.write(f"{output[:100]}... {visual_features['raw'].shape}")
 
-        if i == args.num_samples:
-            print("Loop finished")
-            break
+            if i == args.num_samples:
+                print("Loop finished")
+                break
+            i += 1 
 
     save_path = os.path.join(save_dir, f"{args.model_name}_vis_embed.pt")
     torch.save(embeddings, save_path)
@@ -155,11 +209,12 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='inference scripts for the trained models')
-    parser.add_argument("--task_name", type=str, default="ocr", 
+    parser.add_argument("--task_name", type=str, default="mmmu", 
                         choices=["ocr", "okvqa", "mmmu", "mmmu_pro"])
-    parser.add_argument("--model_name", type=str, default="InternVL2-8B",
-                        choices=["llava-v1.6-vicuna-7b-hf", "llava-v1.6-vicuna-13b-hf", "Qwen2.5-VL-7B-Instruct", "InternVL2-8B"])
-    parser.add_argument("--dataset_type", type= str, default="train", choices=["test", "validation", "train"])
+    parser.add_argument("--model_name", type=str, default="deepseek-vl2-small",
+                        choices=["llava-v1.6-vicuna-7b-hf", "llava-v1.6-vicuna-13b-hf", 
+                                 "Qwen2.5-VL-7B-Instruct", "InternVL2-8B", "deepseek-vl2-tiny", "deepseek-vl2-small"])
+    parser.add_argument("--dataset_type", type= str, default="validation", choices=["test", "validation", "train"])
     parser.add_argument("--num_samples", type=int, default=1000)
     parser.add_argument("--checkpoint_count", type=int, default=1500)
     arguments = parser.parse_args()
