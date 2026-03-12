@@ -1,0 +1,7 @@
+torch
+transformers
+openai
+pygad
+pandas
+numpy
+statsmodels
