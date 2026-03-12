@@ -1,5 +1,6 @@
 results/*
 !results/.gitkeep
+!results/main_figure.jpg
 
 *.pyc
 .idea/*
