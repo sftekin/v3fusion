@@ -18,7 +18,7 @@ please provide your huggingface token by asigning the variable `hf_token`
 
 ## Downloads
 
-You may [download](https://www.dropbox.com/scl/fo/mccxjvq1hyrt7s3bdk0vx/ANO-4r-vC9NM7-v30MIW7ww?rlkey=9dwdq0jot818jqngjf281hb7t&st=ubkw6so5&dl=0) the inference to datasets: `mmmu`, `mmmu_pro`, `ocr`, `okvqa`. After download put the folder inside `results/`
+You may [download](https://drive.google.com/file/d/1dmBZSQdn0x1i5xxZiajU-P-V-kg7zFQT/view?usp=sharing) the inference to datasets: `mmmu`, `mmmu_pro`, `ocr`, `okvqa`. After download put the folder inside `results/`
 
 # Run
 
