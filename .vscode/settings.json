@@ -2,7 +2,7 @@
     // Use Black as the Python formatter (PEP8 compliant)
     "python.formatting.provider": "black",
     // Automatically format Python files on save
-    "editor.formatOnSave": true,
+    "editor.formatOnSave": false,
     // Organize imports automatically on save
     "editor.codeActionsOnSave": {
         "source.organizeImports": "explicit"

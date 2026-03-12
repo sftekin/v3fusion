@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import itertools
 
 
 def pairwise_stat(fir_arr, sec_arr):
@@ -93,3 +94,21 @@ def calc_generalized_div(binary_preds):
 
     return gd
 
+def calc_pairwise_arr(stat_df, comb, stat_name):
+    stat_arr = stat_df[stat_name].values
+    val = 0
+    for i, pair in enumerate(list(itertools.combinations(comb, 2))):
+        val += stat_arr[pair]
+    val = val / (i + 1)
+    return val
+
+
+def calc_binary_entropy(arr):
+    # Count occurrences of 0s and 1s
+    unique, counts = np.unique(arr, return_counts=True)
+    probs = counts / counts.sum()  # Convert counts to probabilities
+    
+    # Compute entropy
+    entropy = -np.sum(probs * np.log2(probs), where=(probs > 0))  # Avoid log(0)
+    
+    return entropy

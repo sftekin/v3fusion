@@ -51,7 +51,7 @@ def train_ensemble(model_names, train_loader, val_loader, novel_loader, n_epochs
     model = MLP(len(model_names) * space_size, [100, 100], space_size)
     model = model.to("cuda")
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
     best_val_acc, tol = (0, 0)
     for epoch in range(n_epochs):
@@ -90,7 +90,7 @@ def train_ensemble(model_names, train_loader, val_loader, novel_loader, n_epochs
                 break
 
     if val_loader:
-        best_dict = torch.load(f"{save_dir}/best_model.tar")
+        best_dict = torch.load(f"{save_dir}/best_model.tar", weights_only=False)
         model.load_state_dict(best_dict["state"])
 
     model.eval()
@@ -143,16 +143,25 @@ def run(args):
     np.random.seed(args.seed)
     model_names = [model_mapper_dict[int(i)] for i in args.model_ids]
 
-    data = load_infer_prob_data(model_names, args.task_name, args.dataset_type)
+    if args.task_name == "mmmu":
+        data = load_infer_prob_data(model_names, "mmmu_pro", "test")    
+        test_data = load_infer_prob_data(model_names, args.task_name, "validation")
+    elif args.task_name == "mmmu_pro":
+        data = load_infer_prob_data(model_names, "mmmu", "validation") 
+        test_data = load_infer_prob_data(model_names, args.task_name, "test")
+    else:
+        # okvqa
+        data = load_infer_prob_data(model_names, args.task_name, args.dataset_type)
+        test_data = load_infer_prob_data(model_names, args.task_name, "validation")
     space_size = (data.shape[1] - 1) // len(model_names)
+    print(f"Space Size: {space_size}")
 
-    test_data = load_infer_prob_data(model_names, "okvqa", "validation")
-    # test_data = load_infer_prob_data(model_names, "okvqa", "validation")
 
     rand_idx = np.random.permutation(len(data))
     data = data[rand_idx]
     ds_len = len(data)
-    train_size = int(ds_len * 0.7)
+    train_size = int(ds_len * 0.75)
+    print(f"Train Size: {train_size}")
     val_size = int(ds_len * 0.3)
     split = {"train": data[:train_size],
              "val": data[train_size:train_size + val_size],
@@ -163,19 +172,19 @@ def run(args):
     novel_loader = DataLoader(split["test"], batch_size=args.batch_size, shuffle=False)
 
     train_ensemble(model_names, train_loader, val_loader, novel_loader,
-                   n_epochs=300, save_dir="results/ensemble",
+                   n_epochs=50, save_dir=f"results/ensemble/{args.task_name}",
                    space_size=space_size, verbose=True)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='inference scripts for the trained models')
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=22)
     parser.add_argument("--task_name", type=str, default="okvqa",
                         choices=["okvqa", "mmmu", "mmmu_pro"])
     parser.add_argument('--model_ids', default="123", type=str)
     parser.add_argument("--dataset_type", type= str, default="train", 
                         choices=["test", "validation", "train"])
-    parser.add_argument('--batch_size', default=16, type=int)
+    parser.add_argument('--batch_size', default=64, type=int)
     arguments = parser.parse_args()
     run(arguments)
 

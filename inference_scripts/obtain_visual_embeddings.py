@@ -22,16 +22,16 @@ import torch
 from configs import hf_token, prompt_formats, llm_domains
 import torch.nn.functional as F
 
-# from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 from data_generator.data_loader import DataCreator
 from data_generator.data_helper import construct_open_ended_prompt
-# from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoProcessor, AutoModelForImageTextToText
 from transformers import AutoModel, AutoTokenizer
 from model_helper import load_image
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM
-from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
-from deepseek_vl2.utils.io import load_pil_images
+# from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
+# from deepseek_vl2.utils.io import load_pil_images
 
 
 def load_model(model_path):
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='inference scripts for the trained models')
     parser.add_argument("--task_name", type=str, default="mmmu", 
                         choices=["ocr", "okvqa", "mmmu", "mmmu_pro"])
-    parser.add_argument("--model_name", type=str, default="deepseek-vl2-small",
+    parser.add_argument("--model_name", type=str, default="llava-v1.6-vicuna-13b-hf",
                         choices=["llava-v1.6-vicuna-7b-hf", "llava-v1.6-vicuna-13b-hf", 
                                  "Qwen2.5-VL-7B-Instruct", "InternVL2-8B", "deepseek-vl2-tiny", "deepseek-vl2-small"])
     parser.add_argument("--dataset_type", type= str, default="validation", choices=["test", "validation", "train"])

@@ -1,4 +1,8 @@
 import os
+import sys
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(parent_dir)
+
 import tqdm
 import argparse
 from configs import hf_token, HF_CACHE, llm_domains
@@ -8,6 +12,8 @@ import torch
 import pandas as pd
 import numpy as np
 from PIL import Image
+import time
+import psutil
 
 from configs import hf_token, prompt_formats, llm_domains
 import torch.nn.functional as F
@@ -63,6 +69,7 @@ def load_model(model_path):
 
 def run(args):
     print(args)
+    process = psutil.Process(os.getpid())
     if args.task_name == "mmmu_pro":
         assert args.dataset_type == "test"
 
@@ -78,6 +85,7 @@ def run(args):
     questions, generated_outputs, ground_truths, choice_probs = [], [], [], []
     max_num_samples = args.num_samples
     num_samples = 0
+    times, memory_usage = [], []
     for ds in tqdm.tqdm(ds_creator.get(args.dataset_type), total=len(ds_creator)):
         for example in tqdm.tqdm(ds):
             if "mmmu" in args.task_name:
@@ -107,6 +115,8 @@ def run(args):
                 system_prompt="").to(model.device)
             
             inputs_embeds = model.prepare_inputs_embeds(**prepare_inputs)
+            mem_before = process.memory_info().rss / (1024 ** 2)  # in MB
+            start = time.perf_counter()
             output = model.language.generate(
                 inputs_embeds=inputs_embeds,
                 attention_mask=prepare_inputs.attention_mask,
@@ -119,6 +129,11 @@ def run(args):
                 output_scores=True,
                 temperature=0.7
             )
+            end = time.perf_counter()
+            times.append(end - start)
+            mem_after = process.memory_info().rss / (1024 ** 2)  # in MB
+            memory_usage.append(mem_after - mem_before)
+
             
             output_txt = processor.decode(output["sequences"][0], skip_special_tokens=True)
 
@@ -152,6 +167,14 @@ def run(args):
                 break
         if num_samples > max_num_samples:
             break
+
+    times = np.array(times)
+    memory_usage = np.array(memory_usage)
+    print(f"Mean latency: {times.mean()*1000:.2f} ms, Mean mem: {memory_usage.mean():.4f}")
+    print(f"P50 latency:  {np.percentile(times, 50)*1000:.2f} ms, P50 latency: {np.percentile(memory_usage, 50):.4f}")
+    print(f"P90 latency:  {np.percentile(times, 90)*1000:.2f} ms, P90 latency: {np.percentile(memory_usage, 90):.4f}")
+    print(f"P99 latency:  {np.percentile(times, 99)*1000:.2f} ms, P99 latency: {np.percentile(memory_usage, 99):.4f}")
+    
 
     # Final Save
     save_checkpoint(save_dir, args.model_name, data_dict)

@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 
 
 from configs import RESULT_DIR
@@ -119,10 +120,22 @@ def extract_answer(tokenizer, prediction):
     return pred
 
 
+def per_tokn(tokenizer, indices):
+    B, L, T = indices.shape
+    final_arr = []
+    for i in range(B):
+        per_seq = []
+        for j in range(L):
+            per_sample = []
+            for k in range(T):
+                per_sample.append(tokenizer.decode(indices[i, j, k]))
+            per_seq.append(per_sample)
+        final_arr.append(per_seq)
+    return final_arr
 
 def test_loop(model, tokenizer, eval_dataloader, device, mode="Validation", return_outputs=False):
     model.eval()
-    predictions, labels = [], []
+    predictions, labels, all_prob, all_tokens, = [], [], [], []
     progress_bar = tqdm.tqdm(range(len(eval_dataloader)))
     for batch in eval_dataloader:
         batch = {k: v.to(device) for k, v in batch.items()}
@@ -130,6 +143,11 @@ def test_loop(model, tokenizer, eval_dataloader, device, mode="Validation", retu
             outputs = model(**batch)
         logits = outputs.logits
         pred = torch.argmax(logits, dim=-1)
+        
+        probs = F.softmax(logits, dim=-1)
+        vals, indices = torch.topk(probs, k=10)
+        all_prob.append(vals)
+
         predictions.append(extract_answer(tokenizer, pred))
         labels.append(extract_answer(tokenizer, batch["labels"]))
         progress_bar.update(1)
@@ -141,7 +159,7 @@ def test_loop(model, tokenizer, eval_dataloader, device, mode="Validation", retu
 
 
     if return_outputs:
-        return scores, predictions, labels
+        return scores, predictions, labels, all_prob
     else:
         return scores
 
@@ -166,6 +184,13 @@ def run(args):
     train_outs, train_q, train_lbl = load_infer_open_data(model_names, args.task_name, ds_split="train")
     val_outs, val_q, val_lbl = load_infer_open_data(model_names, args.task_name, ds_split="validation")
     test_outs, test_q, test_lbl = load_infer_open_data(model_names, args.task_name, ds_split="test")
+    
+    print(train_outs.shape, np.array(train_q).shape, np.array(train_lbl).shape)
+    total_len = train_outs.shape[1]
+    train_len = int(0.75 * total_len)
+    
+    train_outs, train_q, train_lbl = train_outs[:, :train_len], train_q[:train_len], train_lbl[:train_len]
+    print(f"Train Split ratio {train_len}, {train_outs.shape}, {len(train_q)}, {len(train_lbl)}")
 
     tokenizer = AutoTokenizer.from_pretrained(ens_model_n)
     train_inputs, train_labels, new_token_ids = tokenize_inputs(tokenizer, train_outs, train_q, train_lbl,
@@ -236,7 +261,7 @@ def run(args):
 
     print("Testing model performance")
     model.load_state_dict(best_dict)
-    test_scores = test_loop(model, tokenizer, test_loader, device, mode="Test")
+    test_scores, predictions, labels, all_prob = test_loop(model, tokenizer, test_loader, device, mode="Test", return_outputs=True)
     score_str = f"Combinations {args.model_ids} \t scores:{test_scores}\n"
     comb_code = "".join(map(lambda x: str(x), args.model_ids))
     scores_path = os.path.join("results", f"scores_{args.task_name}_{comb_code}.txt")
@@ -245,8 +270,18 @@ def run(args):
 
     print("Saving model...")
     model_save_path = os.path.join("results", "ens_models",
-                                   f"best_result_{args.task_name}_{comb_code}")
+                                   f"best_model_{args.task_name}_{comb_code}")
     model.save_pretrained(model_save_path)
+    
+    results_save_path = os.path.join("results", "ens_models",
+                                   f"best_result_{args.task_name}_{comb_code}.pth")
+    torch.save({
+        'test_scores': test_scores,
+        'predictions': predictions,
+        'labels': labels,
+        'all_prob': all_prob
+    }, results_save_path)
+
 
 
 
@@ -256,7 +291,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--task_name", type=str, default="ocr",
                         choices=["mmmu"])
-    parser.add_argument('--model_ids', default="012345", type=str)
+    parser.add_argument('--model_ids', default="12", type=str)
     parser.add_argument('--batch_size', default=16, type=int)
     arguments = parser.parse_args()
     run(arguments)

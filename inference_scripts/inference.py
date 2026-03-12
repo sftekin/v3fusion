@@ -113,8 +113,8 @@ def run(args):
             if len(images) != 1 or example.get("question_type", "multiple-choice") == question_type:
                 continue
 
-            for question, answer in zip(example["question"], example["answer"]):
-                res_dict = construct_open_ended_prompt()
+            # for question, answer in zip(example["question"], example["answer"]):
+            #     res_dict = construct_open_ended_prompt()
 
             if "InternVL2" not in args.model_name:
                 res_dict = construct_prompt(

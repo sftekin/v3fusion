@@ -4,7 +4,7 @@ from nltk.metrics.scores import f_measure
 import numpy as np
 import torch
 import torchvision.transforms as T
-from decord import VideoReader, cpu
+# from decord import VideoReader, cpu
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from transformers import AutoModel, AutoTokenizer
@@ -12,15 +12,18 @@ from transformers import AutoModel, AutoTokenizer
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+
 def build_transform(input_size):
     MEAN, STD = IMAGENET_MEAN, IMAGENET_STD
     transform = T.Compose([
         T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-        T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+        T.Resize((input_size, input_size),
+                 interpolation=InterpolationMode.BICUBIC),
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD)
     ])
     return transform
+
 
 def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
     best_ratio_diff = float('inf')
@@ -36,6 +39,7 @@ def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_
             if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
                 best_ratio = ratio
     return best_ratio
+
 
 def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
     orig_width, orig_height = image.size
@@ -75,17 +79,18 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
         processed_images.append(thumbnail_img)
     return processed_images
 
+
 def load_image(image, input_size=448, max_num=12):
     image = image.convert('RGB')
     transform = build_transform(input_size=input_size)
-    images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
+    images = dynamic_preprocess(
+        image, image_size=input_size, use_thumbnail=True, max_num=max_num)
     pixel_values = [transform(image) for image in images]
     pixel_values = torch.stack(pixel_values)
     return pixel_values
 
 
-
-def calc_metric(labels, pred_arr):
+def calc_metric(labels, pred_arr, return_scores=False):
     blue_scores, em_scores, F1 = [], [], []
     for i in range(len(labels)):
         pred = str(pred_arr[i]).strip().split(" ")
@@ -107,4 +112,7 @@ def calc_metric(labels, pred_arr):
         else:
             em_scores.append(0)
 
-    return np.mean(blue_scores), np.mean(em_scores), np.mean(F1)
+    if return_scores:
+        return [np.mean(blue_scores), np.mean(em_scores), np.mean(F1)], [blue_scores, em_scores, F1]
+    else:
+        return np.mean(blue_scores), np.mean(em_scores), np.mean(F1)

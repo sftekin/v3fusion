@@ -6,6 +6,8 @@ RESULT_DIR = "results"
 HF_CACHE = "~/scratch/hf-cache"
 
 hf_token = ""
+openai_token = ""
+together_ai_token = ""
 
 llm_domains = {
     "llava-v1.6-vicuna-7b-hf": "llava-hf",
@@ -27,3 +29,4 @@ system_message = """You are a Vision Language Ensemble Model specialized in inte
 Your task is to analyze the provided chart image, candidate model outputs, and respond to queries with concise answers, usually a single word, number, or short phrase.
 The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
 Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
+
