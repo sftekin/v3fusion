@@ -1,3 +1,10 @@
+import sys
+sys.path.append("../")
+import os
+
+from configs import hf_token, HF_CACHE, llm_domains
+os.environ['HF_HOME'] = HF_CACHE
+
 import torch
 from transformers import AutoModelForCausalLM
 

@@ -8,17 +8,15 @@ os.environ['HF_HOME'] = HF_CACHE
 
 from model_helper import load_image
 from transformers import AutoModel, AutoTokenizer
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoProcessor
 from data_generator.data_helper import construct_open_ended_prompt
 from data_generator.data_loader import DataCreator
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 import torch.nn.functional as F
 from configs import hf_token, prompt_formats, llm_domains
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from peft import PeftModel
 from transformers import StoppingCriteria, StoppingCriteriaList
 import transformers
 import torch
@@ -71,10 +69,12 @@ def check_im_size(image):
 
 def load_model(model_path):
     if "llava" in model_path:
+        from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
         processor = LlavaNextProcessor.from_pretrained(model_path)
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path, torch_dtype=torch.float16, low_cpu_mem_usage=True, token=hf_token)
     elif "Qwen" in model_path:
+        from transformers import AutoModelForImageTextToText
         min_pixels = 256 * 28 * 28
         max_pixels = 1280 * 28 * 28
         processor = AutoProcessor.from_pretrained(
@@ -89,6 +89,27 @@ def load_model(model_path):
             trust_remote_code=True).eval().cuda()
         processor = AutoTokenizer.from_pretrained(
             model_path, trust_remote_code=True, use_fast=False)
+
+        # transformers >=4.50 stopped auto-mixing GenerationMixin into PreTrainedModel;
+        # InternVL2's trust_remote_code language_model predates that change and calls
+        # self.generate() internally, so add the mixin back at runtime. can_generate()
+        # already returned False during __init__ (before this patch), which left
+        # generation_config as None, so that needs repairing too.
+        from transformers import GenerationMixin, GenerationConfig
+        lm = model.language_model
+        lm_cls = type(lm)
+        if not issubclass(lm_cls, GenerationMixin):
+            lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+        if lm.generation_config is None:
+            lm.generation_config = GenerationConfig.from_model_config(lm.config)
+        # InternLM2's prepare_inputs_for_generation and attention layers manage
+        # past_key_values as plain legacy tuples and assume `is not None` means
+        # "has real cached tensors". Modern GenerationMixin instead auto-injects
+        # an empty (but non-None) DynamicCache before the first forward pass,
+        # so past_key_values[0][0] is None -> AttributeError on .shape. Disabling
+        # the auto Cache construction keeps past_key_values as None/real tuples,
+        # which this legacy code already handles correctly on its own.
+        lm_cls._supports_default_dynamic_cache = classmethod(lambda cls: False)
 
     return processor, model
 
@@ -123,7 +144,17 @@ def run(args):
     for ds in tqdm.tqdm(ds_creator.get(args.dataset_type), total=len(ds_creator)):
         for example in tqdm.tqdm(ds):
             images = [example["image"]]
-            for question, answer in zip(example["question"], example["answer"]):
+
+            if isinstance(example["question"], list):
+                # ocr: "question"/"answer" are lists of multiple QA pairs per image
+                qa_pairs = list(zip(example["question"], example["answer"]))
+            elif args.task_name == "okvqa":
+                # okvqa: single question per example, "answer" is an index into "options"
+                qa_pairs = [(example["question"], example["options"][example["answer"]])]
+            else:
+                qa_pairs = [(example["question"], example["answer"])]
+
+            for question, answer in qa_pairs:
 
                 if "InternVL2" not in args.model_name:
                     res_dict = construct_open_ended_prompt(
@@ -170,8 +201,10 @@ def run(args):
                 else:
                     res_dict = construct_open_ended_prompt(
                         question, prompt_formats, processor=None)
-                    generation_config = dict(
-                        max_new_tokens=100, return_dict_in_generate=True, output_scores=True)
+                    # model.chat() always calls tokenizer.batch_decode(generation_output, ...)
+                    # assuming a plain token-id tensor; return_dict_in_generate=True would make
+                    # generate() return a GenerateDecoderOnlyOutput instead, breaking that decode.
+                    generation_config = dict(max_new_tokens=100)
                     pixel_values = load_image(
                         images[0]).to(torch.bfloat16).cuda()
 

@@ -88,7 +88,17 @@ def run(args):
         for example in tqdm.tqdm(ds):
 
             images = [example["image"].convert("RGB")]
-            for question, answer in zip(example["question"], example["answer"]):
+
+            if isinstance(example["question"], list):
+                # ocr: "question"/"answer" are lists of multiple QA pairs per image
+                qa_pairs = list(zip(example["question"], example["answer"]))
+            elif args.task_name == "okvqa":
+                # okvqa: single question per example, "answer" is an index into "options"
+                qa_pairs = [(example["question"], example["options"][example["answer"]])]
+            else:
+                qa_pairs = [(example["question"], example["answer"])]
+
+            for question, answer in qa_pairs:
                 res_dict = construct_open_ended_prompt(question, prompt_formats, processor=None)
 
                 conversation = [

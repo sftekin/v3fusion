@@ -7,6 +7,7 @@ import re
 from diversity_stats import calc_generalized_div, calc_stat_matrices
 from ens_methods import voting
 from ens_metrics import calc_div_acc
+from cka_utils import calc_cka_matrix, calc_focal_cka, load_pooled_embeddings
 import time
 import argparse
 
@@ -59,8 +60,8 @@ def load_hist_data(model_names, infer_dir, task_name, ds_split):
             extracted_outputs.append(pred_txt[:1].upper())
         extracted_outputs = np.array(extracted_outputs)
 
-        labels = data_df["answer"].values.astype(str) 
-        if task_name == "mmmu_pro" and "llava" not in mn:
+        labels = data_df["answer"].values.astype(str)
+        if task_name == "mmmu_pro" and mn != "llava-v1.6-vicuna-13b-hf":
             extracted_outputs = np.delete(extracted_outputs, (1017), axis=0)
             prob_pred = np.delete(prob_pred, (1017), axis=0)
             labels = np.delete(labels, (1017), axis=0)
@@ -99,8 +100,15 @@ def run(args):
     parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     infer_dir = os.path.join(parent_dir, "results" , "inference")
     hist_data = load_hist_data(model_names, infer_dir, args.dataset_name, args.ds_split)
-    weights = [args.focal_div_weight, args.acc_weight, args.cka_weight]
+    div_weights = [args.focal_div_weight, args.acc_weight, 0]
     size_penalty = args.size_penalty
+
+    cka_matrix = None
+    if args.cka_weight > 0:
+        print("Computing pairwise CKA matrix for the model pool...")
+        pooled_embeddings = load_pooled_embeddings(model_names, args.dataset_name, args.ds_split, parent_dir)
+        cka_matrix = calc_cka_matrix(pooled_embeddings)
+        del pooled_embeddings
 
     # errors_dict = {mn:hist_data["error_arr"][:, i] for i, mn in enumerate(model_names)}
     # stat_matrices = calc_stat_matrices(errors_dict)
@@ -111,14 +119,24 @@ def run(args):
     if multiplier > 1:
         hist_data = {k:replicate(v, multiplier) for k, v in hist_data.items()}
 
+    # the score of every subset the GA evaluates, so the report can rank unique ensembles
+    fitness_cache = {}
+
     def fitness_function(ga_instance, solution, solution_idx):
+        key = tuple(solution)
+        if key in fitness_cache:
+            return fitness_cache[key]
         if sum(solution) < 2:
             score = -99
         else:
-            focal_div, acc_score, _ = calc_div_acc(solution, hist_data)
-            score = focal_div * weights[0] + acc_score * weights[1]
+            score = sum(calc_div_acc(solution, hist_data, div_weights))
+            if args.cka_weight > 0:
+                selected_ids = np.argwhere(solution).ravel()
+                focal_cka = 1 - calc_focal_cka(selected_ids, cka_matrix)  # dissimilarity: higher = more diverse
+                score += args.cka_weight * focal_cka
             if size_penalty:
                 score -= 0.1 * sum(solution)/len(solution)
+        fitness_cache[key] = score
         return score
 
     ga_params = {
@@ -146,16 +164,25 @@ def run(args):
     end_time = time.time()
     ga_instance.plot_fitness(ylabel="Score", title="", font_size=16)
 
-    # solution, solution_fitness, solution_idx = ga_instance.best_solution()
+    solution, solution_fitness, solution_idx = ga_instance.best_solution()
 
-    # pop_fitness = ga_instance.cal_pop_fitness()
-    # top_idx = pop_fitness.argsort()[-5:]
-    # for i in range(5):
-    #     sol = ga_instance.population[top_idx[i]]
-    #     sol_div, sol_acc, _ = calc_div_acc(sol, hist_data)
-    #     selected_models = [model_names[i] for i in range(len(model_names)) if sol[i]]
-    #     print(f"Selected models in the top {i} solution : {selected_models} with "
-    #           f"Focal Diversity, Accuracy, and Fitness value = {sol_div}, {sol_acc}, {pop_fitness[top_idx[i]]}")
+    # the final population converges to copies of the best ensemble, so rank the unique ones the GA scored instead
+    visited = sorted(((sol, fitness) for sol, fitness in fitness_cache.items() if sum(sol) >= 2),
+                     key=lambda sol_fitness: sol_fitness[1], reverse=True)
+    top_n = min(10, len(visited))
+    report_weights = [1, 1, 0]
+    print(f"\nTop {top_n} of the {len(visited)} unique ensemble sets the GA scored:")
+    for rank, (sol, fitness) in enumerate(visited[:top_n], start=1):
+        sol = np.array(sol)
+        selected_models = [model_names[i] for i in range(len(model_names)) if sol[i]]
+        focal_div, acc_score = calc_div_acc(sol, hist_data, report_weights)
+        line = (f"#{rank}: {selected_models} | Focal Diversity = {focal_div:.4f}, "
+                f"Accuracy = {acc_score:.4f}, Fitness = {fitness:.4f}")
+        if args.cka_weight > 0:
+            selected_ids = np.argwhere(sol).ravel()
+            focal_cka = 1 - calc_focal_cka(selected_ids, cka_matrix)
+            line += f", Focal CKA = {focal_cka:.4f}"
+        print(line)
 
     print(f"Lasted {(end_time - start_time)}seconds")
     print(ga_params)
@@ -163,10 +190,10 @@ def run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='focal diversity pruning')
-    parser.add_argument('--dataset_name', default="okvqa", choices=["mmmu", "mmmu_pro", "okvqa", "ocr"])
-    parser.add_argument("--focal_div_weight", default=0.3, type=float)
-    parser.add_argument("--cka_weight", default=0.3, type=float)
-    parser.add_argument("--acc_weight", default=0.3, type=float)
+    parser.add_argument('--dataset_name', default="mmmu", choices=["mmmu", "mmmu_pro", "okvqa", "ocr"])
+    parser.add_argument("--focal_div_weight", default=0.5, type=float)
+    parser.add_argument("--cka_weight", default=0, type=float)
+    parser.add_argument("--acc_weight", default=0.5, type=float)
     parser.add_argument("--size_penalty", default=0, type=int, choices=[0, 1])
     parser.add_argument('--model_ids', default="012345", type=str)
     parser.add_argument("--ds_split", type=str,

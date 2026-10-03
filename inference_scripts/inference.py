@@ -81,6 +81,27 @@ def load_model(model_path):
                 trust_remote_code=True).eval().cuda()
         processor = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
 
+        # transformers >=4.50 stopped auto-mixing GenerationMixin into PreTrainedModel;
+        # InternVL2's trust_remote_code language_model predates that change and calls
+        # self.generate() internally, so add the mixin back at runtime. can_generate()
+        # already returned False during __init__ (before this patch), which left
+        # generation_config as None, so that needs repairing too.
+        from transformers import GenerationMixin, GenerationConfig
+        lm = model.language_model
+        lm_cls = type(lm)
+        if not issubclass(lm_cls, GenerationMixin):
+            lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+        if lm.generation_config is None:
+            lm.generation_config = GenerationConfig.from_model_config(lm.config)
+        # InternLM2's prepare_inputs_for_generation and attention layers manage
+        # past_key_values as plain legacy tuples and assume `is not None` means
+        # "has real cached tensors". Modern GenerationMixin instead auto-injects
+        # an empty (but non-None) DynamicCache before the first forward pass,
+        # so past_key_values[0][0] is None -> AttributeError on .shape. Disabling
+        # the auto Cache construction keeps past_key_values as None/real tuples,
+        # which this legacy code already handles correctly on its own.
+        lm_cls._supports_default_dynamic_cache = classmethod(lambda cls: False)
+
     return processor, model
 
 
@@ -139,15 +160,24 @@ def run(args):
                 res_dict = construct_prompt(
                     example, config=prompt_formats, processor=None, ds_name=args.task_name
                 )
-                generation_config = dict(max_new_tokens=100, return_dict_in_generate=True, output_scores=True)
+                # model.chat() always calls tokenizer.batch_decode(generation_output, ...)
+                # assuming a plain token-id tensor; return_dict_in_generate=True would make
+                # generate() return a GenerateDecoderOnlyOutput instead, breaking that decode.
+                # This means chat()'s legacy API never exposes scores, so choice_probs can't
+                # be computed for this branch below (see placeholder zeros).
+                generation_config = dict(max_new_tokens=100)
                 pixel_values = load_image(images[0]).to(torch.bfloat16).cuda()
                 output = model.chat(processor, pixel_values, res_dict["prompt"], generation_config)
-                output_txt = processor.decode(output["sequences"][0], skip_special_tokens=True)
+                output_txt = output
 
             # output_txt = output_txt[-7:]
-            probs_first_token = torch.nn.functional.softmax(output["scores"][0], dim=-1)
-            token_ids = [processor.encode(f"({letter}")[1] for letter in res_dict["prediction_range"]]
-            choice_probs.append(probs_first_token[0, token_ids])
+            tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+            token_ids = [tokenizer.encode(f"({letter}")[1] for letter in res_dict["prediction_range"]]
+            if "InternVL2" not in args.model_name:
+                probs_first_token = torch.nn.functional.softmax(output["scores"][0], dim=-1)
+                choice_probs.append(probs_first_token[0, token_ids])
+            else:
+                choice_probs.append(torch.zeros(len(token_ids)))
             generated_outputs.append(output_txt)
             questions.append(example["question"])
             if "okvqa" == args.task_name:

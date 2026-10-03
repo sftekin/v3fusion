@@ -1,23 +1,24 @@
 import re
 
 def replace_image_tags(text):
-    return re.sub(r"<image \d>", "<image>", text)
+    seen = set()
+
+    def _sub(match):
+        tag = match.group(0)
+        if tag in seen:
+            return ""
+        seen.add(tag)
+        return "<image>"
+
+    return re.sub(r"<image \d>", _sub, text)
 
 
-def apply_processor(processor, text, add_image_field=False):
-    conversation = [
-        {
-        "role": "user",
-        "content": [
-            {"type": "image"},
-            {
-                "type": "text", 
-                "text": text
-            },
-            ],
-        },
-    ]
-    # conversation[0]["content"].append({"type": "image"})
+def apply_processor(processor, text, add_image_field=True):
+    content = []
+    if add_image_field:
+        content.append({"type": "image"})
+    content.append({"type": "text", "text": text})
+    conversation = [{"role": "user", "content": content}]
     prompt = processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
     return prompt
 

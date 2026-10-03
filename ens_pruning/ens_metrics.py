@@ -1,8 +1,8 @@
 import numpy as np
 from statsmodels.stats import inter_rater as irr
 
-from .diversity_stats import calc_generalized_div, calc_pairwise_arr, calc_stat_matrices, calc_binary_entropy
-from .ens_methods import voting
+from diversity_stats import calc_generalized_div, calc_pairwise_arr, calc_stat_matrices, calc_binary_entropy
+from ens_methods import voting
 
 
 # def calc_div_acc(solution, hist_data):

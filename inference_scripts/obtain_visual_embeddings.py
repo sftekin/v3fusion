@@ -22,29 +22,29 @@ import torch
 from configs import hf_token, prompt_formats, llm_domains
 import torch.nn.functional as F
 
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 from data_generator.data_loader import DataCreator
 from data_generator.data_helper import construct_open_ended_prompt
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoProcessor
 from transformers import AutoModel, AutoTokenizer
 from model_helper import load_image
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM
-# from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
 # from deepseek_vl2.utils.io import load_pil_images
 
 
 def load_model(model_path):
     if "llava" in model_path:
+        from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
         model_id = f"llava-hf/{model_path}"
         model = LlavaNextForConditionalGeneration.from_pretrained(
-            model_id, 
-            torch_dtype=torch.float16, 
+            model_id,
+            torch_dtype=torch.float16,
             low_cpu_mem_usage=True,
             token=hf_token
         ).to("cuda")
         processor = LlavaNextProcessor.from_pretrained(model_id)
     elif "Qwen" in model_path:
+        from transformers import AutoModelForImageTextToText
         model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
         processor = AutoProcessor.from_pretrained(model_id, min_pixels=256*28*28, max_pixels=1280*28*28)
         model = AutoModelForImageTextToText.from_pretrained(model_id, torch_dtype="auto", device_map="auto")
@@ -58,7 +58,29 @@ def load_model(model_path):
                 use_flash_attn=True,
                 trust_remote_code=True).eval().cuda()
         processor = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+
+        # transformers >=4.50 stopped auto-mixing GenerationMixin into PreTrainedModel;
+        # InternVL2's trust_remote_code language_model predates that change and calls
+        # self.generate() internally, so add the mixin back at runtime. can_generate()
+        # already returned False during __init__ (before this patch), which left
+        # generation_config as None, so that needs repairing too.
+        from transformers import GenerationMixin, GenerationConfig
+        lm = model.language_model
+        lm_cls = type(lm)
+        if not issubclass(lm_cls, GenerationMixin):
+            lm_cls.__bases__ = lm_cls.__bases__ + (GenerationMixin,)
+        if lm.generation_config is None:
+            lm.generation_config = GenerationConfig.from_model_config(lm.config)
+        # InternLM2's prepare_inputs_for_generation and attention layers manage
+        # past_key_values as plain legacy tuples and assume `is not None` means
+        # "has real cached tensors". Modern GenerationMixin instead auto-injects
+        # an empty (but non-None) DynamicCache before the first forward pass,
+        # so past_key_values[0][0] is None -> AttributeError on .shape. Disabling
+        # the auto Cache construction keeps past_key_values as None/real tuples,
+        # which this legacy code already handles correctly on its own.
+        lm_cls._supports_default_dynamic_cache = classmethod(lambda cls: False)
     else:
+        from deepseek_vl2.models import DeepseekVLV2Processor, DeepseekVLV2ForCausalLM
         model_id = f"deepseek-ai/{model_path}"
         processor = DeepseekVLV2Processor.from_pretrained(model_id, token=hf_token)
         vl_gpt: DeepseekVLV2ForCausalLM = AutoModelForCausalLM.from_pretrained(
@@ -211,11 +233,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='inference scripts for the trained models')
     parser.add_argument("--task_name", type=str, default="mmmu", 
                         choices=["ocr", "okvqa", "mmmu", "mmmu_pro"])
-    parser.add_argument("--model_name", type=str, default="llava-v1.6-vicuna-13b-hf",
+    parser.add_argument("--model_name", type=str, default="InternVL2-8B",
                         choices=["llava-v1.6-vicuna-7b-hf", "llava-v1.6-vicuna-13b-hf", 
                                  "Qwen2.5-VL-7B-Instruct", "InternVL2-8B", "deepseek-vl2-tiny", "deepseek-vl2-small"])
     parser.add_argument("--dataset_type", type= str, default="validation", choices=["test", "validation", "train"])
-    parser.add_argument("--num_samples", type=int, default=1000)
+    parser.add_argument("--num_samples", type=int, default=1500)
     parser.add_argument("--checkpoint_count", type=int, default=1500)
     arguments = parser.parse_args()
     run(arguments)
