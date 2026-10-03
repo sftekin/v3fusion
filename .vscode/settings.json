@@ -14,5 +14,7 @@
     ],
     // Optional: show format provider in the status bar
     "python.formatting.autopep8Path": "",
-    "python.formatting.blackPath": ""
+    "python.formatting.blackPath": "",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }
